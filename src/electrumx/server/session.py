@@ -1278,7 +1278,9 @@ class ElectrumX(SessionBase):
 
         return [{'tx_hash': hash_to_hex_str(utxo.tx_hash),
                  'tx_pos': utxo.tx_pos,
-                 'height': utxo.height, 'value': utxo.value}
+                 'height': utxo.height, 'value': utxo.value,
+                 'n_visibility': utxo.n_visibility,
+                 'n_asset_type': utxo.n_asset_type}
                 for utxo in utxos
                 if (utxo.tx_hash, utxo.tx_pos) not in spends]
 
@@ -1299,6 +1301,62 @@ class ElectrumX(SessionBase):
         '''Return the confirmed and unconfirmed balance of a scripthash.'''
         hashX = scripthash_to_hashX(scripthash)
         return await self.get_balance(hashX)
+    # ── SOQ-INFRA-018: Multi-asset balance + filtered UTXO queries ──────
+
+    async def get_multi_balance(self, hashX):
+        """Return confirmed balances split by asset type (SOQ vs USDSOQ).
+
+        SDK contract:
+            {
+                "soq":    {"confirmed": <int>, "unconfirmed": <int>},
+                "usdsoq": {"confirmed": <int>, "unconfirmed": <int>}
+            }
+
+        Unconfirmed is currently NOT split by asset type because mempool
+        UTXOs don't carry nAssetType.  We report the full mempool delta
+        under "soq" and zero under "usdsoq" (conservative -- never show
+        phantom USDSOQ).
+        """
+        utxos = await self.db.all_utxos(hashX)
+        soq_confirmed = sum(u.value for u in utxos if u.n_asset_type == 0)
+        usdsoq_confirmed = sum(u.value for u in utxos if u.n_asset_type == 1)
+        unconfirmed = await self.mempool.balance_delta(hashX)
+        self.bump_cost(1.0 + len(utxos) / 50)
+        return {
+            'soq':    {'confirmed': soq_confirmed,    'unconfirmed': unconfirmed},
+            'usdsoq': {'confirmed': usdsoq_confirmed, 'unconfirmed': 0},
+        }
+
+    async def scripthash_get_multi_balance(self, scripthash):
+        '''Return confirmed+unconfirmed balance split by asset type.'''
+        hashX = scripthash_to_hashX(scripthash)
+        return await self.get_multi_balance(hashX)
+
+    async def hashX_listunspent_by_asset(self, hashX, asset_type):
+        '''Return UTXOs filtered by nAssetType (0=SOQ, 1=USDSOQ).'''
+        utxos = await self.db.all_utxos(hashX)
+        utxos = sorted(utxos)
+        utxos.extend(await self.mempool.unordered_UTXOs(hashX))
+        self.bump_cost(1.0 + len(utxos) / 50)
+        spends = await self.mempool.potential_spends(hashX)
+
+        return [{'tx_hash': hash_to_hex_str(utxo.tx_hash),
+                 'tx_pos': utxo.tx_pos,
+                 'height': utxo.height, 'value': utxo.value,
+                 'n_visibility': utxo.n_visibility,
+                 'n_asset_type': utxo.n_asset_type}
+                for utxo in utxos
+                if (utxo.tx_hash, utxo.tx_pos) not in spends
+                and utxo.n_asset_type == asset_type]
+
+    async def scripthash_listunspent_by_asset(self, scripthash, asset_type=0):
+        '''Return UTXOs of a scripthash filtered by asset type.
+        asset_type: 0 = native SOQ, 1 = USDSOQ.'''
+        hashX = scripthash_to_hashX(scripthash)
+        asset_type = int(asset_type)
+        if asset_type not in (0, 1):
+            raise RPCError(BAD_REQUEST, f'invalid asset_type: {asset_type}')
+        return await self.hashX_listunspent_by_asset(hashX, asset_type)
 
     async def unconfirmed_history(self, hashX):
         # Note both confirmed history and mempool history are ordered
@@ -1736,6 +1794,8 @@ class ElectrumX(SessionBase):
             'blockchain.scripthash.get_history': self.scripthash_get_history,
             'blockchain.scripthash.get_mempool': self.scripthash_get_mempool,
             'blockchain.scripthash.listunspent': self.scripthash_listunspent,
+            'blockchain.scripthash.get_multi_balance': self.scripthash_get_multi_balance,
+            'blockchain.scripthash.listunspent_by_asset': self.scripthash_listunspent_by_asset,
             'blockchain.scripthash.subscribe': self.scripthash_subscribe,
             'blockchain.transaction.broadcast': self.transaction_broadcast,
             'blockchain.transaction.get': self.transaction_get,

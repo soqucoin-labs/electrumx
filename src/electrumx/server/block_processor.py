@@ -471,8 +471,15 @@ class BlockProcessor:
                 # Get the hashX
                 hashX = script_hashX(txout.pk_script)
                 append_hashX(hashX)
+                # Phase 4: asset/visibility follow the WITNESS VERSION (the bytes were removed from CTxOut).
+                #   USDSOQ = witness v7 (OP_7 = 0x57),  confidential = witness v4 (OP_4 = 0x54).
+                # Keep the same 2-byte DB "extra" layout [visibility, assetType] so db.py/session.py unchanged.
+                pk = txout.pk_script
+                _v7 = len(pk) == 34 and pk[0] == 0x57   # OP_7 -> USDSOQ
+                _v4 = len(pk) == 34 and pk[0] == 0x54   # OP_4 -> confidential
+                extra = bytes([1 if _v4 else 0, 1 if _v7 else 0])
                 put_utxo(tx_hash + to_le_uint32(idx),
-                         hashX + tx_numb + to_le_uint64(txout.value))
+                         hashX + tx_numb + to_le_uint64(txout.value) + extra)
 
             append_hashXs(hashXs)
             update_touched(hashXs)
@@ -803,8 +810,15 @@ class LTORBlockProcessor(BlockProcessor):
                 # Get the hashX
                 hashX = script_hashX(txout.pk_script)
                 add_hashXs(hashX)
+                # Phase 4: asset/visibility follow the WITNESS VERSION (the bytes were removed from CTxOut).
+                #   USDSOQ = witness v7 (OP_7 = 0x57),  confidential = witness v4 (OP_4 = 0x54).
+                # Keep the same 2-byte DB "extra" layout [visibility, assetType] so db.py/session.py unchanged.
+                pk = txout.pk_script
+                _v7 = len(pk) == 34 and pk[0] == 0x57   # OP_7 -> USDSOQ
+                _v4 = len(pk) == 34 and pk[0] == 0x54   # OP_4 -> confidential
+                extra = bytes([1 if _v4 else 0, 1 if _v7 else 0])
                 put_utxo(tx_hash + to_le_uint32(idx),
-                         hashX + tx_numb + to_le_uint64(txout.value))
+                         hashX + tx_numb + to_le_uint64(txout.value) + extra)
             tx_num += 1
 
         # Spend the inputs

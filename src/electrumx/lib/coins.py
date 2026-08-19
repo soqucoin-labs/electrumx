@@ -46,6 +46,7 @@ import electrumx.lib.tx as lib_tx
 from electrumx.lib.tx import Tx
 import electrumx.lib.tx_dash as lib_tx_dash
 import electrumx.lib.tx_axe as lib_tx_axe
+import electrumx.lib.tx_soqucoin as lib_tx_soq
 import electrumx.server.block_processor as block_proc
 import electrumx.server.daemon as daemon
 from electrumx.server.session import (ElectrumX, DashElectrumX,
@@ -1107,7 +1108,7 @@ class Viacoin(AuxPowMixin, Coin):
     TX_PER_BLOCK = 30
     RPC_PORT = 5222
     REORG_LIMIT = 5000
-    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
+    DESERIALIZER = lib_tx.DeserializerSegWit
     PEERS = [
         'vialectrum.bitops.me s t',
         'server.vialectrum.org s t',
@@ -1210,7 +1211,7 @@ class Namecoin(NameIndexAuxPoWMixin, Coin):
     WIF_BYTE = bytes.fromhex("e4")
     GENESIS_HASH = ('000000000062b72c5e2ceb45fbc8587e'
                     '807c155b0da735e6483dfba2f0a9c770')
-    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
+    DESERIALIZER = lib_tx.DeserializerSegWit
     TX_COUNT = 4415768
     TX_COUNT_HEIGHT = 329065
     TX_PER_BLOCK = 10
@@ -1288,7 +1289,7 @@ class Dogecoin(AuxPowMixin, Coin):
     TX_COUNT_HEIGHT = 1604979
     TX_PER_BLOCK = 20
     REORG_LIMIT = 2000
-    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
+    DESERIALIZER = lib_tx.DeserializerSegWit
 
 
 class DogecoinTestnet(Dogecoin):
@@ -3133,7 +3134,7 @@ class Myriadcoin(AuxPowMixin, Coin):
     WIF_BYTE = bytes.fromhex("b2")
     GENESIS_HASH = ('00000ffde4c020b5938441a0ea3d314b'
                     'f619eff0b38f32f78f7583cffa1ea485')
-    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
+    DESERIALIZER = lib_tx.DeserializerSegWit
     TX_COUNT = 1976629
     TX_COUNT_HEIGHT = 2580356
     TX_PER_BLOCK = 20
@@ -3689,7 +3690,7 @@ class Defcoin(Coin):
     TX_PER_BLOCK = 1
     RPC_PORT = 9386
     REORG_LIMIT = 5000
-    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
+    DESERIALIZER = lib_tx.DeserializerSegWit
 
 
 class Auroracoin(Coin):
@@ -3958,7 +3959,7 @@ class Quebecoin(AuxPowMixin, Coin):
     WIF_BYTE = bytes.fromhex("ba")
     GENESIS_HASH = ('000008c2d57759af6462352ee9f4923d'
                     '97401cb599a9318e6595a2a74c26ea74')
-    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
+    DESERIALIZER = lib_tx.DeserializerSegWit
     TX_COUNT = 1
     TX_COUNT_HEIGHT = 1
     TX_PER_BLOCK = 20
@@ -3994,7 +3995,7 @@ class Syscoin(AuxPowMixin, Coin):
     WIF_BYTE = bytes.fromhex("80")
     GENESIS_HASH = ('0000022642db0346b6e01c2a397471f4'
                     'f12e65d4f4251ec96c1f85367a61a7ab')
-    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
+    DESERIALIZER = lib_tx.DeserializerSegWit
     TX_COUNT = 911232
     TX_COUNT_HEIGHT = 954572
     TX_PER_BLOCK = 1
@@ -4103,3 +4104,90 @@ class FerriteTestnet(Ferrite):
         'enode2.ferritecoin.org s t',
         'enode3.ferritecoin.org s t',
     ]
+
+
+# ─── Soqucoin (Quantum-Safe L1, derived from Dogecoin Core) ───
+# Uses AuxPoW merge-mining with SegWit support.
+# Bech32m addresses (ssq1... on stagenet, sq1... on mainnet).
+# Patent pending: ML-DSA-44 Dilithium signatures (FIPS 204).
+
+class Soqucoin(Coin):
+    """Soqucoin Mainnet.
+
+    AuxPoW merge-mining with Litecoin is active from genesis.
+    Block headers are variable-length (80 bytes + AuxPoW proof).
+    STATIC_BLOCK_HEADERS must be False to handle this correctly.
+
+    CTxOut includes nVisibility (1 byte) + nAssetType (1 byte) after scriptPubKey.
+    """
+    NAME = "Soqucoin"
+    SHORTNAME = "SOQ"
+    NET = "mainnet"
+    XPUB_VERBYTES = bytes.fromhex("02facafd")
+    XPRV_VERBYTES = bytes.fromhex("02fac398")
+    P2PKH_VERBYTE = bytes.fromhex("3f")   # 63 -> 'S' prefix
+    P2SH_VERBYTES = (bytes.fromhex("09"),)  # 9
+    WIF_BYTE = bytes.fromhex("9e")          # 158
+    GENESIS_HASH = ('0000000000000000000000000000000000000000000000000000000000000000')
+    TX_COUNT = 1
+    TX_COUNT_HEIGHT = 1
+    TX_PER_BLOCK = 5
+    REORG_LIMIT = 2000
+    STATIC_BLOCK_HEADERS = False
+    BASIC_HEADER_SIZE = 80
+    DESERIALIZER = lib_tx_soq.DeserializerSoqucoinAuxPow
+    PEER_DEFAULT_PORTS = {'t': '50001', 's': '50002'}
+    DEFAULT_MAX_SEND = 10000000
+
+    @classmethod
+    def header_hash(cls, header):
+        """Given a header return hash -- only hash the first 80 bytes."""
+        return double_sha256(header[:cls.BASIC_HEADER_SIZE])
+
+    @classmethod
+    def block_header(cls, block, height):
+        """Return the AuxPow block header bytes."""
+        deserializer = cls.DESERIALIZER(block)
+        return deserializer.read_header(cls.BASIC_HEADER_SIZE)
+
+
+
+class SoqucoinStagenet(Coin):
+    """Soqucoin Stagenet -- live pre-mainnet network for community mining.
+
+    AuxPoW merge-mining with Litecoin activates at block 25450.
+    Before that height, blocks have standard 80-byte headers.
+    After activation, block headers include the variable-length AuxPoW proof.
+    STATIC_BLOCK_HEADERS must be False to handle this correctly.
+    """
+    NAME = "Soqucoin"
+    SHORTNAME = "SOQ"
+    NET = "stagenet"
+    P2PKH_VERBYTE = bytes.fromhex("7d")    # 125 -> 's' prefix
+    P2SH_VERBYTES = (bytes.fromhex("64"),)  # 100 -> 'g' prefix
+    WIF_BYTE = bytes.fromhex("fd")          # 253
+    XPUB_VERBYTES = bytes.fromhex("043587cf")
+    XPRV_VERBYTES = bytes.fromhex("04358394")
+    GENESIS_HASH = ('97df3ae79eaf5623c0feecfa1079439f'
+                    '8acdfea06a0f2acb4ef63c6b9ad91bb0')
+    TX_COUNT = 10
+    TX_COUNT_HEIGHT = 5800
+    TX_PER_BLOCK = 1
+    REORG_LIMIT = 200
+    STATIC_BLOCK_HEADERS = False
+    BASIC_HEADER_SIZE = 80
+    DESERIALIZER = lib_tx_soq.DeserializerSoqucoinAuxPow
+    PEER_DEFAULT_PORTS = {'t': '50001', 's': '50002'}
+    # AuxPoW sends larger block headers; default 1MB limit may not suffice
+    DEFAULT_MAX_SEND = 10000000
+
+    @classmethod
+    def header_hash(cls, header):
+        """Given a header return hash -- only hash the first 80 bytes."""
+        return double_sha256(header[:cls.BASIC_HEADER_SIZE])
+
+    @classmethod
+    def block_header(cls, block, height):
+        """Return the AuxPow block header bytes."""
+        deserializer = cls.DESERIALIZER(block)
+        return deserializer.read_header(cls.BASIC_HEADER_SIZE)

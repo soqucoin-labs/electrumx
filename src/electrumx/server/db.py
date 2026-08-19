@@ -42,6 +42,8 @@ class UTXO:
     tx_hash: bytes   # txid
     height: int      # block height
     value: int       # in satoshis
+    n_visibility: int = 0  # 0x00=transparent, 0x01=confidential (SOQ-INFRA-018)
+    n_asset_type: int = 0  # 0x00=native SOQ, 0x01=USDSOQ (SOQ-INFRA-018)
 
 
 @attr.s(slots=True)
@@ -333,7 +335,8 @@ class DB:
             hashX = value[:HASHX_LEN]
             txout_idx = key[-4:]
             tx_num = value[HASHX_LEN: HASHX_LEN+TXNUM_LEN]
-            value_sats = value[-8:]
+            # SOQ-INFRA-018: value_sats now includes 2 extra bytes (nVisibility + nAssetType)
+            value_sats = value[HASHX_LEN+TXNUM_LEN:]  # 8 (value) + 2 (visibility+asset) = 10 bytes
             suffix = txout_idx + tx_num
             batch_put(b'h' + key[:COMP_TXID_LEN] + suffix, hashX)
             batch_put(b'u' + hashX + suffix, value_sats)
@@ -758,9 +761,13 @@ class DB:
             for db_key, db_value in self.utxo_db.iterator(prefix=prefix):
                 txout_idx, = unpack_le_uint32(db_key[-TXNUM_LEN-4:-TXNUM_LEN])
                 tx_num, = unpack_le_uint64(db_key[-TXNUM_LEN:] + txnum_padding)
-                value, = unpack_le_uint64(db_value)
+                value, = unpack_le_uint64(db_value[:8])
+                # SOQ-INFRA-018: Read nVisibility + nAssetType (backward-compatible)
+                db_val_len = len(db_value)
+                n_visibility = db_value[8] if db_val_len > 8 else 0
+                n_asset_type = db_value[9] if db_val_len > 9 else 0
                 tx_hash, height = self.fs_tx_hash(tx_num)
-                utxos_append(UTXO(tx_num, txout_idx, tx_hash, height, value))
+                utxos_append(UTXO(tx_num, txout_idx, tx_hash, height, value, n_visibility, n_asset_type))
             return utxos
 
         while True:
@@ -814,7 +821,7 @@ class DB:
                     # This can happen if the DB was updated between
                     # getting the hashXs and getting the UTXOs
                     return None
-                value, = unpack_le_uint64(db_value)
+                value, = unpack_le_uint64(db_value[:8])  # SOQ-INFRA-018: first 8 bytes only (extra bytes follow)
                 return hashX, value
             return [lookup_utxo(*hashX_pair) for hashX_pair in hashX_pairs]
 
