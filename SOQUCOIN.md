@@ -25,7 +25,7 @@ It removes any dependency on infrastructure operated by Soqucoin Labs.
 
 ## What this fork changes
 
-Four files, ~183 lines. Everything else is upstream.
+Five files, ~242 lines under `src/`. Everything else is upstream.
 
 ### 1. `src/electrumx/lib/coins.py` — the coin definitions
 
@@ -43,7 +43,17 @@ headers), so the header layout is not the plain Bitcoin one.
 > mined yet. It must be set to the real genesis hash at launch, or a mainnet instance will refuse
 > to sync. `SoqucoinStagenet` carries a real hash and works today.
 
-### 2. `src/electrumx/server/block_processor.py` — asset and visibility derivation
+### 2. `src/electrumx/lib/tx_soqucoin.py` — the AuxPoW deserializer
+
+`DeserializerSoqucoinAuxPow`, referenced by both coin classes above. Outputs are standard Bitcoin
+(value plus scriptPubKey), inherited unchanged from `DeserializerSegWit`, because the byte-less
+`CTxOut` migration removed the extension bytes. The only Soqucoin-specific handling is
+`read_auxpow()`, which walks the variable-length merge-mining header (parent coinbase, merkle
+branches, parent header) so the cursor lands correctly for the rest of the block.
+
+Both coin classes name this class in `DESERIALIZER`, so `coins.py` cannot be imported without it.
+
+### 3. `src/electrumx/server/block_processor.py` — asset and visibility derivation
 
 Soqucoin outputs carry an asset type and a visibility flag. Following the byte-less `CTxOut`
 migration these are **derived from the witness version** rather than read from extra output bytes:
@@ -63,12 +73,12 @@ The result is stored as a 2-byte `[visibility, assetType]` suffix on each UTXO d
 > Soqucoin node repository, never in documentation. If the indexer's mapping drifts from the
 > node's, assets are mislabelled — balances would be wrong without any error being raised.
 
-### 3. `src/electrumx/server/db.py` — UTXO records carry asset metadata
+### 4. `src/electrumx/server/db.py` — UTXO records carry asset metadata
 
 `UTXO` gains `n_visibility` and `n_asset_type`. The stored value field becomes 10 bytes (8-byte
 value plus the 2 extra), and reads are length-checked so shorter legacy records still decode.
 
-### 4. `src/electrumx/server/session.py` — protocol additions
+### 5. `src/electrumx/server/session.py` — protocol additions
 
 - UTXO responses include `n_asset_type`.
 - **New method `get_multi_balance(hashX)`** returns confirmed balances split by asset type, so a
@@ -78,6 +88,35 @@ value plus the 2 extra), and reads are length-checked so shorter legacy records 
 > Electrum protocol. A stock Electrum client will not call it, and you do not need it unless you
 > want per-asset balances. Confirmed balances only — unconfirmed is deliberately not split, because
 > mempool records lack the asset metadata.
+
+---
+
+## Verifying your checkout
+
+One command, and it is worth running before you build anything on top:
+
+```bash
+git clone -b soqucoin https://github.com/soqucoin-labs/electrumx && cd electrumx
+pip install .
+cd /tmp && python -c "
+from electrumx.lib.coins import Coin
+for net in ('mainnet', 'stagenet'):
+    c = Coin.lookup_coin_class('Soqucoin', net)
+    print(c.__name__, c.NET, c.DESERIALIZER.__name__)
+"
+```
+
+Expected output:
+
+```
+Soqucoin mainnet DeserializerSoqucoinAuxPow
+SoqucoinStagenet stagenet DeserializerSoqucoinAuxPow
+```
+
+CI runs exactly this on every push, on Python 3.10 and 3.12, installing from a fresh checkout so
+that only committed files can satisfy it. That gate exists because an earlier revision of this
+branch was missing `tx_soqucoin.py` and could not be imported from a clean clone at all, while
+looking complete from the outside.
 
 ---
 
