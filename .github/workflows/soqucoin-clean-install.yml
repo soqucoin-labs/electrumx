@@ -1,0 +1,69 @@
+# Clean-install gate for Soqucoin coin support.
+#
+# The defect this exists to catch: coins.py imported electrumx.lib.tx_soqucoin
+# while that module was untracked, so the fork was unimportable from a fresh
+# clone even though every local check passed. actions/checkout fetches only
+# tracked files and the install happens from that checkout, so an untracked
+# file on any developer's disk cannot make this job pass.
+#
+# Deliberately installs the package rather than adding src/ to PYTHONPATH: the
+# thing being verified is what an integrator gets from `git clone && pip install .`,
+# which is the promise made in soqucoin-sdk docs/EXCHANGE_INTEGRATION.md option A.
+
+name: soqucoin clean-install
+
+on:
+  push:
+    branches: [soqucoin, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  clean-install-import:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail early if the Soqucoin modules are not tracked
+        # A clearer failure than ModuleNotFoundError three steps later, and it
+        # names the exact class of mistake that produced this workflow.
+        run: |
+          for f in src/electrumx/lib/tx_soqucoin.py src/electrumx/lib/coins.py; do
+            git ls-files --error-unmatch "$f" > /dev/null \
+              || { echo "::error::$f is not tracked by git — a clean clone cannot import it"; exit 1; }
+          done
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system dependencies
+        # plyvel builds against leveldb headers.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libleveldb-dev
+
+      - name: Install ElectrumX from the checkout
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+          pip install pytest
+
+      - name: Import and resolve the coin classes from outside the source tree
+        # cd out of the repo so the installed package is what gets imported and
+        # the src/ layout cannot shadow it.
+        run: |
+          cd "$RUNNER_TEMP"
+          python -c "
+          from electrumx.lib.coins import Coin
+          for net in ('mainnet', 'stagenet'):
+              c = Coin.lookup_coin_class('Soqucoin', net)
+              print(f'resolved {c.__name__}: NET={c.NET} DESERIALIZER={c.DESERIALIZER.__name__}')
+          "
+
+      - name: Run the Soqucoin coin-support tests
+        run: pytest tests/test_soqucoin_coin_support.py -v
