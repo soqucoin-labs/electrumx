@@ -4128,7 +4128,12 @@ class Soqucoin(Coin):
     P2PKH_VERBYTE = bytes.fromhex("3f")   # 63 -> 'S' prefix
     P2SH_VERBYTES = (bytes.fromhex("09"),)  # 9
     WIF_BYTE = bytes.fromhex("9e")          # 158
-    GENESIS_HASH = ('0000000000000000000000000000000000000000000000000000000000000000')
+    # Ceremony genesis, 2026-09-02 (soqucoin v2.3.0, chainparams.cpp mainnet):
+    # 0d828600816cbd7c23789660b53f90cb6ec7ff85540698e13845eb2d2f0486a8.
+    # A server whose coin reports a different hash is indexing the wrong chain;
+    # the SDK's ElectrumX client refuses to connect to one.
+    GENESIS_HASH = ('0d828600816cbd7c23789660b53f90cb'
+                    '6ec7ff85540698e13845eb2d2f0486a8')
     TX_COUNT = 1
     TX_COUNT_HEIGHT = 1
     TX_PER_BLOCK = 5

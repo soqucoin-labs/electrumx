@@ -33,15 +33,18 @@ Adds two coin classes:
 
 | Class | `NET` | Address prefix | Notes |
 |-------|-------|----------------|-------|
-| `Soqucoin` | `mainnet` | `S` (P2PKH verbyte `0x3f`) | ⚠️ see the genesis caveat below |
+| `Soqucoin` | `mainnet` | `S` (P2PKH verbyte `0x3f`) | genesis `0d828600…86a8` (ceremony 2026-09-02, soqucoin v2.3.0) |
 | `SoqucoinStagenet` | `stagenet` | `s` (P2PKH verbyte `0x7d`) | the live test network |
 
 Both override `header_hash` and `block_header` because Soqucoin uses **AuxPoW** (merge-mined
 headers), so the header layout is not the plain Bitcoin one.
 
-> ⚠️ **`Soqucoin.GENESIS_HASH` is currently a zero placeholder.** Mainnet genesis has not been
-> mined yet. It must be set to the real genesis hash at launch, or a mainnet instance will refuse
-> to sync. `SoqucoinStagenet` carries a real hash and works today.
+> `Soqucoin.GENESIS_HASH` is the ceremony genesis
+> `0d828600816cbd7c23789660b53f90cb6ec7ff85540698e13845eb2d2f0486a8` (soqucoin v2.3.0,
+> `chainparams.cpp`). Until 2026-09-03 it was a zero placeholder, so a mainnet instance built from an
+> earlier revision refuses to sync: rebuild from this revision or later. The Soqucoin SDK's ElectrumX
+> client checks `server.features` `genesis_hash` against the chain its addresses belong to and refuses
+> a server that reports anything else.
 
 ### 2. `src/electrumx/lib/tx_soqucoin.py` — the AuxPoW deserializer
 
@@ -124,7 +127,7 @@ looking complete from the outside.
 
 ```ini
 COIN=Soqucoin
-NET=stagenet          # or mainnet, once the genesis hash above is set
+NET=stagenet          # or mainnet
 DB_DIRECTORY=/path/to/db
 DAEMON_URL=http://user:password@127.0.0.1:PORT/
 SERVICES=tcp://:50001,rpc://
