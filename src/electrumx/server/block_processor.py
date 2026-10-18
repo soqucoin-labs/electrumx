@@ -538,7 +538,7 @@ class BlockProcessor:
         put_utxo = self.utxo_cache.__setitem__
         spend_utxo = self.spend_utxo
         touched = self.touched
-        undo_entry_len = HASHX_LEN + TXNUM_LEN + 8
+        undo_entry_len = HASHX_LEN + TXNUM_LEN + 8 + 2  # SOQ-INFRA-018: a UTXO value carries 2 extra bytes (visibility, asset), so every undo entry advance_txs writes is 2 bytes wider
 
         for tx in reversed(txs):
             tx_hash = tx.txid
@@ -854,7 +854,7 @@ class LTORBlockProcessor(BlockProcessor):
         put_utxo = self.utxo_cache.__setitem__
         spend_utxo = self.spend_utxo
         add_touched = self.touched.add
-        undo_entry_len = HASHX_LEN + TXNUM_LEN + 8
+        undo_entry_len = HASHX_LEN + TXNUM_LEN + 8 + 2  # SOQ-INFRA-018: a UTXO value carries 2 extra bytes (visibility, asset), so every undo entry advance_txs writes is 2 bytes wider
 
         # Restore coins that had been spent
         # (may include coins made then spent in this block)

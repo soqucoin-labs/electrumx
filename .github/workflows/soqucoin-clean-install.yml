@@ -66,4 +66,4 @@ jobs:
           "
 
       - name: Run the Soqucoin coin-support tests
-        run: pytest tests/test_soqucoin_coin_support.py -v
+        run: pytest tests/test_soqucoin_coin_support.py tests/test_soqucoin_reorg_undo.py -v
