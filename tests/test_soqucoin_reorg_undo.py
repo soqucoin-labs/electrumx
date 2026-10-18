@@ -6,10 +6,9 @@
 # value (visibility and asset type), so the value advance_txs keeps for a UTXO
 # is HASHX_LEN + TXNUM_LEN + 8 + 2 bytes, and the undo record it writes for a
 # spent input is that whole value. backup_txs, the reorg path, reads the undo
-# record back in fixed-width steps. The width it stepped stayed at upstream's
-# HASHX_LEN + TXNUM_LEN + 8, so the first reorg that undid a block holding a
-# spend (mainnet height 7,434, 2026-10-18) raised `assert n == 0` and every
-# mainnet indexer restarted in a loop until the width was corrected.
+# record back in fixed-width steps, and a step of upstream's width
+# (HASHX_LEN + TXNUM_LEN + 8) leaves two bytes of every entry unread, so a
+# reorg that undoes a block holding a spend ends on `assert n == 0`.
 #
 # The property under test: a block advanced through advance_txs and then
 # backed out through backup_txs restores the spent UTXO's cache entry byte for
@@ -121,9 +120,8 @@ def test_backup_txs_restores_the_spent_utxos_byte_for_byte():
     bp.height = 1
     before = {k: v for k, v in bp.utxo_cache.items()}
 
-    # Eight inputs, as the orphaned mainnet block at 7,434 carried: six of them
-    # spend outputs of a second coinbase so the undo record holds more than one
-    # kind of value.
+    # Eight inputs; six of them spend outputs of a second coinbase so the undo
+    # record holds more than one kind of value.
     second = _coinbase(b'\x33' * 32, [TxOutput(value=1_00000000 * (i + 1), pk_script=_witness_v1_script(10 + i))
                                       for i in range(6)])
     bp.advance_txs([second], is_unspendable_legacy)
