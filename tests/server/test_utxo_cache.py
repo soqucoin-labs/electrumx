@@ -283,7 +283,7 @@ async def test_a_limit_outside_1_to_1000_is_refused(limit):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('asset_type', [2, -1, '0', True])
+@pytest.mark.parametrize('asset_type', [2, -1, '0', True, 0.0])
 async def test_an_unknown_asset_type_is_refused(asset_type):
     session, _, _ = make_session([])
     with pytest.raises(RPCError):
@@ -300,15 +300,30 @@ async def test_a_cache_hit_costs_the_reply_not_the_read():
 
 # ── The cache ────────────────────────────────────────────────────────────────────────────
 
-def test_the_cache_holds_no_more_than_its_bound():
-    cache = UTXOCache(lambda: 0, maxsize=4)
+def test_the_cache_holds_no_more_than_its_bound_in_outputs():
+    cache = UTXOCache(lambda: 0, maxsize=1000)
     for i in range(10):
         hashX = bytes([i]) * 11
-        cache.end(hashX, cache.begin(hashX), 'k', {'n': i})
-        assert len(cache) <= 4
-    assert len(cache) == 4
-    assert cache.get(bytes([9]) * 11, 'k') == {'n': 9}
+        cache.end(hashX, cache.begin(hashX), 'k', {'outputs': [{}] * 199, 'n': i})
+        assert cache._entries.currsize <= 1000
+    assert len(cache) == 5
+    assert cache.get(bytes([9]) * 11, 'k')['n'] == 9
     assert cache.get(bytes([0]) * 11, 'k') is None
+    # a result larger than the whole cache is answered and not stored
+    cache.end(H, cache.begin(H), 'k', {'outputs': [{}] * 1000})
+    assert cache.get(H, 'k') is None and cache._entries.currsize <= 1000
+
+
+@pytest.mark.asyncio
+async def test_one_address_asked_for_every_limit_keeps_four_results():
+    session, _, _ = make_session(many_rows(5000))
+    for limit in range(1, 1001, 7):
+        await session.hashX_listunspent_bounded(H, limit, None)
+        await session.hashX_listunspent_bounded(H, limit, 1)
+    seq, results, rows = session.session_mgr.utxo_cache._entries[H]
+    assert len(results) == 4
+    assert rows == sum(len(r['outputs']) + 1 for r in results.values())
+    assert session.session_mgr.utxo_cache._entries.currsize == rows
 
 
 def test_reads_in_flight_are_forgotten_once_they_end():
@@ -331,9 +346,9 @@ def test_the_selection_matches_the_bridges_on_its_own_fixtures():
     for case in cases:
         rows = [{'tx_hash': h, 'tx_pos': p, 'height': height, 'value': v,
                  'n_visibility': 0, 'n_asset_type': 0} for h, p, height, v in case['rows']]
-        kept = [[r['tx_hash'], r['tx_pos']] for r in bounded_utxos(rows, case['limit'])]
+        kept = [[r['tx_hash'], r['tx_pos'], r['height']] for r in bounded_utxos(rows, case['limit'])]
         if len(rows) <= case['limit']:
-            assert kept == [[h, p] for h, p, _, _ in case['rows']]
+            assert kept == [[h, p, height] for h, p, height, _ in case['rows']]
         assert kept == case['kept'], case['limit']
 
 
@@ -356,3 +371,111 @@ def test_a_transaction_keeps_its_outputs_together_while_they_fit():
     # a transaction with more outputs than the bound still offers its largest
     big = [row(9, p, 100, 1000 - p) for p in range(10)]
     assert [r['tx_pos'] for r in bounded_utxos(big, 3)] == [0, 1, 2]
+
+
+# ── The real mempool: a refresh changes the maps across awaits ───────────────────────────
+
+from electrumx.lib.coins import BitcoinCash
+from electrumx.lib.tx import Tx, TxInput, TxOutput
+from electrumx.server.mempool import MemPool, MemPoolAPI
+
+BCH = BitcoinCash
+
+
+def _tx(prevouts, pk_script, value):
+    tx = Tx(version=2, inputs=[TxInput(prev_hash=h, prev_idx=i, script=b'', sequence=0xffffffff)
+                               for h, i in prevouts],
+            outputs=[TxOutput(value=value, pk_script=pk_script)], locktime=0, txid=None, wtxid=None)
+    raw = tx.serialize()
+    return BCH.DESERIALIZER.TX_HASH_FN(raw), raw
+
+
+class SlowAPI(MemPoolAPI):
+    '''A daemon whose transaction fetches wait on `gate` for every chunk not holding `first`.'''
+
+    def __init__(self, notifications, db_utxos):
+        self.n = notifications
+        self.db_utxos = db_utxos       # prevout -> (hashX, value)
+        self.raw = {}
+        self.first = None
+        self.gate = asyncio.Event()
+
+    async def height(self):
+        return 0
+
+    def cached_height(self):
+        return 0
+
+    def db_height(self):
+        return 0
+
+    async def mempool_hashes(self):
+        return [hash_to_hex_str(h) for h in self.raw]
+
+    async def raw_transactions(self, hex_hashes):
+        hashes = [bytes.fromhex(hh)[::-1] for hh in hex_hashes]
+        if self.first not in hashes:
+            await self.gate.wait()
+        return [self.raw[h] for h in hashes]
+
+    async def lookup_utxos(self, prevouts):
+        return [self.db_utxos.get(p) for p in prevouts]
+
+    async def on_mempool(self, touched, height):
+        await self.n.on_mempool(touched, height)
+
+    def on_mempool_change(self, touched):
+        self.n.on_mempool_change(touched)
+
+
+@pytest.mark.asyncio
+async def test_a_spend_accepted_mid_refresh_is_seen_before_the_refresh_ends():
+    x_script = BCH.hash160_to_P2PKH_script(b'\x01' * 20)
+    x = BCH.hashX_from_script(x_script)
+    other_script = BCH.hash160_to_P2PKH_script(b'\x02' * 20)
+    other = BCH.hashX_from_script(other_script)
+    rows = [UTXO(i, 0, txh(i), 1000, COIN // 100) for i in range(1200)] + [BIG]
+    db = FakeDB([])
+    db.rows = {x: rows}
+    filler = {(txh(10**7 + i), 0): (other, COIN) for i in range(260)}
+    notifications = Notifications()
+    api = SlowAPI(notifications, {**filler, (BIG.tx_hash, BIG.tx_pos): (x, BIG.value)})
+    mempool = MemPool(BCH, api)
+    session = ElectrumX.__new__(ElectrumX)
+    session.db, session.mempool, session.session_mgr = db, mempool, FakeManager(db)
+    session.bump_cost = lambda c: None
+    notifications.add_touched_listener(session.session_mgr.utxo_cache.on_touched)
+    await notifications.start(0, lambda h, t: asyncio.sleep(0))
+
+    first = await session.hashX_listunspent_bounded(x, 200, None)
+    assert (BIG_HEX, 0) in outpoints(first)
+    # 260 new transactions, two chunks of fetches; the spend of BIG is in the chunk that finishes
+    spend, raw = _tx([(BIG.tx_hash, BIG.tx_pos)], other_script, BIG.value - 1000)
+    api.raw[spend] = raw
+    api.first = spend
+    for prevout in filler:
+        h, r = _tx([prevout], other_script, COIN - 1000)
+        api.raw[h] = r
+    touched = set()
+    refresh = asyncio.create_task(mempool._process_mempool(set(api.raw), touched, 0))
+    while spend not in mempool.txs:
+        await asyncio.sleep(0)
+    assert not refresh.done()                     # on_mempool has not been called
+
+    during = await session.hashX_listunspent_bounded(x, 200, None)
+    assert (BIG_HEX, 0) not in outpoints(during)
+    assert during['total'] == first['total'] - 1
+    assert (await session.get_multi_balance(x))['soq']['unconfirmed'] == -BIG.value
+
+    api.gate.set()
+    await refresh
+    assert len(mempool.txs) == 261
+    assert (BIG_HEX, 0) not in outpoints(await session.hashX_listunspent_bounded(x, 200, None))
+
+    # The spend leaves the daemon's mempool with no block (evicted): BIG is unspent again, and
+    # is offered before the refresh reports through on_mempool (which _process_mempool never calls).
+    del api.raw[spend]
+    await mempool._process_mempool(set(api.raw), set(), 0)
+    back = await session.hashX_listunspent_bounded(x, 200, None)
+    assert (BIG_HEX, 0) in outpoints(back)
+    assert (await session.get_multi_balance(x))['soq']['unconfirmed'] == 0

@@ -50,15 +50,21 @@ for (let c = 0; c < 150; c++) {
   for (let t = 0; t < ntx; t++) {
     const txh = hex(Math.floor(rnd() * 1e9));
     const nout = rnd() < 0.2 ? 1 + Math.floor(rnd() * 40) : 1 + Math.floor(rnd() * 4);
-    const height = rnd() < 0.25 ? (rnd() < 0.5 ? 0 : -1) : 1 + Math.floor(rnd() * 50000);
+    const pendingOnly = c % 10 === 9;
+    const txHeight = pendingOnly || rnd() < 0.25 ? (rnd() < 0.5 ? 0 : -1) : 1 + Math.floor(rnd() * 50000);
+    const mixed = rnd() < 0.15;
     for (let p = 0; p < nout; p++) {
       const value = rnd() < 0.4 ? 1000000 : Math.floor(rnd() * 5) * 1000000 + Math.floor(rnd() * 3);
+      // mixed: outputs of one transaction at different heights, as no chain gives but a test can
+      const height = mixed && !pendingOnly && rnd() < 0.5 ? 0 : txHeight;
       rows.push({ tx_hash: txh, tx_pos: p, height, value, n_visibility: 0, n_asset_type: 0 });
+      // a block flushed before the mempool refreshes: the same outpoint listed again at height 0
+      if (height > 0 && rnd() < 0.08) rows.push({ tx_hash: txh, tx_pos: p, height: 0, value, n_visibility: 0, n_asset_type: 0 });
     }
   }
   // the order ElectrumX would give is irrelevant past the bound; shuffle it
   for (let i = rows.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [rows[i], rows[j]] = [rows[j], rows[i]]; }
-  const kept = largestUtxos(rows, limit).map((u) => [u.tx_hash, u.tx_pos]);
+  const kept = largestUtxos(rows, limit).map((u) => [u.tx_hash, u.tx_pos, u.height]);
   cases.push({ limit, rows: rows.map((u) => [u.tx_hash, u.tx_pos, u.height, u.value]), kept });
 }
 process.stdout.write(JSON.stringify({ source: 'soqucoin-ops 4fc527b8 infrastructure/soqushield-api/server.js largestUtxos', cases }));

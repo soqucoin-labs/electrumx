@@ -1421,9 +1421,9 @@ class ElectrumX(SessionBase):
         limit: 1 to 1,000.  asset_type: omitted or null for every output, 0 native SOQ,
         1 USDSOQ.'''
         hashX = scripthash_to_hashX(scripthash)
-        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= BOUND_MAX:
+        if type(limit) is not int or not 1 <= limit <= BOUND_MAX:
             raise RPCError(BAD_REQUEST, f'limit must be an integer from 1 to {BOUND_MAX:,d}')
-        if asset_type is not None and (isinstance(asset_type, bool) or asset_type not in (0, 1)):
+        if asset_type is not None and (type(asset_type) is not int or asset_type not in (0, 1)):
             raise RPCError(BAD_REQUEST, f'invalid asset_type: {asset_type}')
         return await self.hashX_listunspent_bounded(hashX, limit, asset_type)
 

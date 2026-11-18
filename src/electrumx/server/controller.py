@@ -74,6 +74,10 @@ class Notifications:
         self.notify = notify_func
         await self.notify(height, set())
 
+    def on_mempool_change(self, touched):
+        '''Called by the mempool, synchronously, as each transaction enters or leaves it.'''
+        self._tell_listeners(touched)
+
     async def on_mempool(self, touched, height):
         self._tell_listeners(touched)
         self._touched_mp[height] = touched

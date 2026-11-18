@@ -19,9 +19,11 @@ outputs.  An entry is served only while it is current:
     utxo_seq moves after every commit that changes UTXO rows (a block flushed or backed up
     in a reorg), so every entry read before a commit stops being served after it, whatever
     the notifications do.
-  * The mempool: the mempool calls Notifications.on_mempool() after each change to its state,
-    with the addresses it touched; the listener drops their entries at once.  Client
-    notifications can be deferred until the block processor catches up; the listener is not.
+  * The mempool: as each transaction enters or leaves it, the mempool calls
+    Notifications.on_mempool_change() with the transaction's addresses, and the listener drops
+    their entries at once.  A refresh changes the mempool across awaits and reports through
+    on_mempool() only when it ends, and client notifications can be deferred further until the
+    block processor catches up; the listener waits for neither.
   * A computation in flight when either happens is not stored: each read records a
     generation per address, which every touched set moves.
 '''
@@ -34,8 +36,10 @@ BOUND_MAX = 1000
 # Results are cached for addresses holding at least this many outputs; below it a read is
 # cheap and a cache would only spend memory.
 CACHE_MIN_UTXOS = 1000
-# Entries, one an address.  Each holds a few results of at most BOUND_MAX outputs.
-CACHE_ENTRIES = 256
+# The cache's size in outputs held (a result costs its outputs plus one), about 25 MB at the
+# most; and the results kept an address, the oldest dropped first.
+CACHE_ROWS = 50_000
+KEYS_PER_ADDRESS = 4
 
 
 def _value_desc(row):
@@ -53,7 +57,10 @@ def bounded_utxos(rows, limit):
     with the largest outputs left.  The kept set is ordered largest first.
 
     This is largestUtxos() of soqucoin-ops infrastructure/soqushield-api/server.js at
-    4fc527b8; tests/server/test_utxo_cache.py checks the two agree.
+    4fc527b8; tests/server/test_utxo_cache.py checks the two agree.  Rows are kept by identity,
+    as the bridge's Set keeps objects: an outpoint listed twice (a block flushed before the
+    mempool refreshes lists a mined output at its height and at 0, as listunspent does) is two
+    rows here too.
     '''
     if len(rows) <= limit:
         return rows
@@ -67,14 +74,19 @@ def bounded_utxos(rows, limit):
         if len(kept) == limit:
             break
         outs = by_tx[row['tx_hash']]
-        if (row['tx_hash'], row['tx_pos']) not in kept and len(kept) + len(outs) <= limit:
+        if id(row) not in kept and len(kept) + len(outs) <= limit:
             for out in outs:
-                kept[(out['tx_hash'], out['tx_pos'])] = out
+                kept[id(out)] = out
     for row in ordered:
         if len(kept) == limit:
             break
-        kept.setdefault((row['tx_hash'], row['tx_pos']), row)
+        kept.setdefault(id(row), row)
     return sorted(kept.values(), key=_value_desc)
+
+
+def _rows(result):
+    '''What a result costs the cache: its outputs, plus one.'''
+    return len(result.get('outputs', ())) + 1
 
 
 class UTXOCache:
@@ -91,10 +103,12 @@ class UTXOCache:
                 cache.end(hashX, token, key, result if worth_caching else None)
     '''
 
-    def __init__(self, seq_fn, maxsize=CACHE_ENTRIES):
+    def __init__(self, seq_fn, maxsize=CACHE_ROWS, keys_per_address=KEYS_PER_ADDRESS):
         self._seq = seq_fn
-        # hashX -> (utxo_seq, {key: result})
-        self._entries = LRUCache(maxsize=maxsize)
+        self._keys = keys_per_address
+        # hashX -> (utxo_seq, {key: result}, rows).  An entry is replaced, never changed in
+        # place, so the LRU's size accounting stays exact.
+        self._entries = LRUCache(maxsize=maxsize, getsizeof=lambda entry: entry[2])
         # hashX -> [generation, reads in flight]; present only while a read is in flight
         self._reads = {}
         self.num_lookups = 0
@@ -108,7 +122,7 @@ class UTXOCache:
         entry = self._entries.get(hashX)
         if entry is None:
             return None
-        seq, results = entry
+        seq, results, _ = entry
         if seq != self._seq():
             del self._entries[hashX]
             return None
@@ -136,10 +150,15 @@ class UTXOCache:
             return
         seq = token[0]
         entry = self._entries.get(hashX)
-        if entry is not None and entry[0] == seq:
-            entry[1][key] = result
-        else:
-            self._entries[hashX] = (seq, {key: result})
+        results = dict(entry[1]) if entry is not None and entry[0] == seq else {}
+        results.pop(key, None)
+        while len(results) >= self._keys:
+            del results[next(iter(results))]
+        results[key] = result
+        rows = sum(_rows(r) for r in results.values())
+        if rows > self._entries.maxsize:
+            return
+        self._entries[hashX] = (seq, results, rows)
 
     def on_touched(self, touched):
         '''The addresses in `touched` changed: drop their entries and void their reads.'''
