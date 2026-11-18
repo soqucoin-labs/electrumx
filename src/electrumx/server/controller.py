@@ -34,6 +34,18 @@ class Notifications:
         self._touched_mp = {}
         self._touched_bp = {}
         self._highest_block = -1
+        # Called with each touched set as it arrives, before the deferral below: a cache of
+        # address state must drop an entry when the state changes, not when clients are told.
+        self._touched_listeners = []
+
+    def add_touched_listener(self, listener):
+        '''listener(touched) is called synchronously on every mempool and block update.  It
+        must not keep or modify the set.'''
+        self._touched_listeners.append(listener)
+
+    def _tell_listeners(self, touched):
+        for listener in self._touched_listeners:
+            listener(touched)
 
     async def _maybe_notify(self):
         tmp, tbp = self._touched_mp, self._touched_bp
@@ -63,10 +75,12 @@ class Notifications:
         await self.notify(height, set())
 
     async def on_mempool(self, touched, height):
+        self._tell_listeners(touched)
         self._touched_mp[height] = touched
         await self._maybe_notify()
 
     async def on_block(self, touched, height):
+        self._tell_listeners(touched)
         self._touched_bp[height] = touched
         self._highest_block = height
         await self._maybe_notify()
