@@ -114,10 +114,10 @@ class DB:
         self.db_height = -1
         self.db_tx_count = 0
         self.db_tip = None  # type: Optional[bytes]
-        # Moves after every commit that changes UTXO rows (a block flushed or backed up).  A
-        # result computed from all_utxos() is current only while this holds the value read
-        # before the read began; db_height and db_tip are set before the batch commits, so
-        # they cannot serve.
+        # Moves once before and once after every commit that changes UTXO rows (a block flushed
+        # or backed up): odd while a commit is in progress.  A result computed from all_utxos()
+        # is current only while this holds the even value read before the read began; db_height
+        # and db_tip are set before the batch commits, so they cannot serve.
         self.utxo_seq = 0
         self.tx_counts = None
         self.last_flush = time.time()
@@ -250,12 +250,16 @@ class DB:
         self.flush_history()
 
         # Flush state last as it reads the wall time.
-        with self.utxo_db.write_batch() as batch:
-            if flush_utxos:
-                self.flush_utxo_db(batch, flush_data)
-            self.flush_state(batch)
         if flush_utxos:
             self.utxo_seq += 1
+        try:
+            with self.utxo_db.write_batch() as batch:
+                if flush_utxos:
+                    self.flush_utxo_db(batch, flush_data)
+                self.flush_state(batch)
+        finally:
+            if flush_utxos:
+                self.utxo_seq += 1
 
         # Update and put the wall time again - otherwise we drop the
         # time it took to commit the batch
@@ -387,11 +391,14 @@ class DB:
 
         self.backup_fs(flush_data.height, flush_data.tx_count)
         self.history.backup(touched, flush_data.tx_count)
-        with self.utxo_db.write_batch() as batch:
-            self.flush_utxo_db(batch, flush_data)
-            # Flush state last as it reads the wall time.
-            self.flush_state(batch)
         self.utxo_seq += 1
+        try:
+            with self.utxo_db.write_batch() as batch:
+                self.flush_utxo_db(batch, flush_data)
+                # Flush state last as it reads the wall time.
+                self.flush_state(batch)
+        finally:
+            self.utxo_seq += 1
 
         elapsed = self.last_flush - start_time
         self.logger.info(f'backup flush #{self.history.flush_count:,d} took '

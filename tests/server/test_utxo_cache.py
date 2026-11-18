@@ -44,8 +44,15 @@ class FakeDB:
         return rows
 
     def flush(self, rows):
-        '''A block (or a reorg's backup) committed: new rows, then the sequence moves.'''
+        '''A block (or a reorg's backup) committed, as DB.flush_dbs() does it.'''
+        self.commit_start()
         self.rows[H] = list(rows)
+        self.commit_end()
+
+    def commit_start(self):
+        self.utxo_seq += 1
+
+    def commit_end(self):
         self.utxo_seq += 1
 
 
@@ -198,6 +205,20 @@ async def test_a_block_that_spends_an_output_is_seen_with_no_notification_at_all
     assert (BIG_HEX, 0) not in outpoints(after)
     assert (await session.get_multi_balance(H))['soq']['confirmed'] == \
         balance['soq']['confirmed'] - BIG.value
+
+
+@pytest.mark.asyncio
+async def test_a_read_during_a_commit_is_not_stored_and_nothing_is_served_until_it_ends():
+    session, db, _ = make_session(many_rows(big=BIG))
+    await wired(session)
+    await session.hashX_listunspent_bounded(H, 200, None)       # cached at an even sequence
+    db.commit_start()                                            # the batch is being written
+    during = await session.hashX_listunspent_bounded(H, 200, None)
+    assert (BIG_HEX, 0) in outpoints(during)                     # read before the write landed
+    db.rows[H] = many_rows()                                     # the write lands: BIG spent
+    assert (BIG_HEX, 0) not in outpoints(await session.hashX_listunspent_bounded(H, 200, None))
+    db.commit_end()
+    assert (BIG_HEX, 0) not in outpoints(await session.hashX_listunspent_bounded(H, 200, None))
 
 
 @pytest.mark.asyncio

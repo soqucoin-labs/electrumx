@@ -16,9 +16,9 @@ UTXOCache holds results computed from all_utxos() and the mempool for addresses 
 outputs.  An entry is served only while it is current:
 
   * The database: each entry carries DB.utxo_seq as read before its computation began.
-    utxo_seq moves after every commit that changes UTXO rows (a block flushed or backed up
-    in a reorg), so every entry read before a commit stops being served after it, whatever
-    the notifications do.
+    utxo_seq moves before and after every commit that changes UTXO rows (a block flushed or
+    backed up in a reorg) and is odd in between; a read begun at an odd value is not stored,
+    and an entry stops being served the moment a commit starts, whatever the notifications do.
   * The mempool: as each transaction enters or leaves it, the mempool calls
     Notifications.on_mempool_change() with the transaction's addresses, and the listener drops
     their entries at once.  A refresh changes the mempool across awaits and reports through
@@ -143,7 +143,7 @@ class UTXOCache:
         '''Store `result` (None stores nothing) if nothing changed since begin().'''
         read = self._reads[hashX]
         read[1] -= 1
-        current = token == (self._seq(), read[0])
+        current = token == (self._seq(), read[0]) and token[0] % 2 == 0
         if not read[1]:
             del self._reads[hashX]
         if result is None or not current:
