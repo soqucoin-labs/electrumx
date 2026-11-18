@@ -129,7 +129,11 @@ class MemPool:
         # Told the hashXs of each transaction the moment it enters or leaves self.txs.  A refresh
         # changes the maps across awaits (one chunk of daemon fetches at a time) and calls
         # api.on_mempool only when it ends; a cache of address state cannot wait for that.
-        self._changed = getattr(api, 'on_mempool_change', None) or (lambda touched: None)
+        self._changed = getattr(api, 'on_mempool_change', None)
+        if self._changed is None:
+            self.logger.warning('the mempool API has no on_mempool_change: address caches '
+                                'will not see mempool changes until a refresh ends')
+            self._changed = lambda touched: None
 
     async def _logging(self, synchronized_event):
         '''Print regular logs of mempool stats.'''
