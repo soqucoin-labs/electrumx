@@ -335,6 +335,16 @@ def test_the_cache_holds_no_more_than_its_bound_in_outputs():
     assert cache.get(H, 'k') is None and cache._entries.currsize <= 1000
 
 
+def test_an_entry_that_grows_evicts_no_other_address_while_it_fits():
+    cache = UTXOCache(lambda: 0, maxsize=1000)
+    for i in range(2):
+        hashX = bytes([i]) * 11
+        cache.end(hashX, cache.begin(hashX), 'a', {'outputs': [{}] * 299})
+    cache.end(H, cache.begin(H), 'a', {'outputs': [{}] * 199})      # 300 + 300 + 200
+    cache.end(H, cache.begin(H), 'b', {'outputs': [{}] * 199})      # H grows to 400: 1000 in all
+    assert len(cache) == 3 and cache._entries.currsize == 1000
+
+
 @pytest.mark.asyncio
 async def test_one_address_asked_for_every_limit_keeps_four_results():
     session, _, _ = make_session(many_rows(5000))

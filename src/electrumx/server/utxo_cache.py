@@ -158,6 +158,9 @@ class UTXOCache:
         rows = sum(_rows(r) for r in results.values())
         if rows > self._entries.maxsize:
             return
+        # Out first: the LRU sizes a replacement before it subtracts what it replaces, and would
+        # evict other addresses to make room the old entry already holds.
+        self._entries.pop(hashX, None)
         self._entries[hashX] = (seq, results, rows)
 
     def on_touched(self, touched):
