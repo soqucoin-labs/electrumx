@@ -126,6 +126,14 @@ class MemPool:
         self.log_status_secs = log_status_secs
         # Prevents mempool refreshes during fee histogram calculation
         self.lock = Lock()
+        # Told the hashXs of each transaction the moment it enters or leaves self.txs.  A refresh
+        # changes the maps across awaits (one chunk of daemon fetches at a time) and calls
+        # api.on_mempool only when it ends; a cache of address state cannot wait for that.
+        self._changed = getattr(api, 'on_mempool_change', None)
+        if self._changed is None:
+            self.logger.warning('the mempool API has no on_mempool_change: address caches '
+                                'will not see mempool changes until a refresh ends')
+            self._changed = lambda touched: None
 
     async def _logging(self, synchronized_event):
         '''Print regular logs of mempool stats.'''
@@ -243,9 +251,12 @@ class MemPool:
                              sum(v for _, v in tx.out_pairs)))
             txs[hash] = tx
 
+            tx_hashXs = set()
             for hashX, _value in itertools.chain(tx.in_pairs, tx.out_pairs):
                 touched.add(hashX)
                 hashXs[hashX].add(hash)
+                tx_hashXs.add(hashX)
+            self._changed(tx_hashXs)
 
         return deferred, {prevout: utxo_map[prevout] for prevout in unspent}
 
@@ -292,6 +303,7 @@ class MemPool:
                 if not hashXs[hashX]:
                     del hashXs[hashX]
             touched |= tx_hashXs
+            self._changed(tx_hashXs)
 
         # Process new transactions
         new_hashes = list(all_hashes.difference(txs))

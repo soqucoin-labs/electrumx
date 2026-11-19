@@ -36,6 +36,8 @@ from electrumx.lib.merkle import MerkleCache
 from electrumx.lib.text import sessions_lines
 from electrumx.server.daemon import DaemonError
 from electrumx.server.transport import PaddedRSTransport
+from electrumx.server.utxo_cache import (BOUND_MAX, CACHE_MIN_UTXOS, UTXOCache,
+                                         bounded_utxos)
 
 if TYPE_CHECKING:
     from electrumx.server.db import DB
@@ -163,6 +165,8 @@ class SessionManager:
         # Really a MerkleCache cache
         self._merkle_txid_cache = LRUCache(maxsize=1000)
         self.estimatefee_cache = LRUCache(maxsize=1000)
+        # listunspent_bounded and get_multi_balance results for addresses of many outputs
+        self.utxo_cache = UTXOCache(lambda: self.db.utxo_seq)
         self.notified_height = None
         self.hsub_results = None
         self._task_group = OldTaskGroup()
@@ -340,6 +344,7 @@ class SessionManager:
             'db_flush_count': self.db.history.flush_count,
             'groups': len(self.session_groups),
             'history cache': cache_fmt(self._history_cache),
+            'utxo cache': cache_fmt(self.utxo_cache),
             'merkle txid cache': cache_fmt(self._merkle_txid_cache),
             'pid': os.getpid(),
             'peers': self.peer_mgr.info(),
@@ -679,6 +684,7 @@ class SessionManager:
             for service in self.env.report_services:
                 self.logger.info(f'advertising service {service}')
             # Start notifications; initialize hsub_results
+            notifications.add_touched_listener(self.utxo_cache.on_touched)
             await notifications.start(self.db.db_height, self._notify_sessions)
             await self._start_external_servers()
             # Peer discovery should start after the external servers
@@ -1317,15 +1323,29 @@ class ElectrumX(SessionBase):
         under "soq" and zero under "usdsoq" (conservative -- never show
         phantom USDSOQ).
         """
-        utxos = await self.db.all_utxos(hashX)
-        soq_confirmed = sum(u.value for u in utxos if u.n_asset_type == 0)
-        usdsoq_confirmed = sum(u.value for u in utxos if u.n_asset_type == 1)
-        unconfirmed = await self.mempool.balance_delta(hashX)
-        self.bump_cost(1.0 + len(utxos) / 50)
-        return {
-            'soq':    {'confirmed': soq_confirmed,    'unconfirmed': unconfirmed},
-            'usdsoq': {'confirmed': usdsoq_confirmed, 'unconfirmed': 0},
-        }
+        cache = self.session_mgr.utxo_cache
+        key = ('multi_balance',)
+        result = cache.get(hashX, key)
+        if result is not None:
+            self.bump_cost(1.0)
+            return result
+        token = cache.begin(hashX)
+        stored = None
+        try:
+            utxos = await self.db.all_utxos(hashX)
+            soq_confirmed = sum(u.value for u in utxos if u.n_asset_type == 0)
+            usdsoq_confirmed = sum(u.value for u in utxos if u.n_asset_type == 1)
+            unconfirmed = await self.mempool.balance_delta(hashX)
+            self.bump_cost(1.0 + len(utxos) / 50)
+            result = {
+                'soq':    {'confirmed': soq_confirmed,    'unconfirmed': unconfirmed},
+                'usdsoq': {'confirmed': usdsoq_confirmed, 'unconfirmed': 0},
+            }
+            if len(utxos) >= CACHE_MIN_UTXOS:
+                stored = result
+        finally:
+            cache.end(hashX, token, key, stored)
+        return result
 
     async def scripthash_get_multi_balance(self, scripthash):
         '''Return confirmed+unconfirmed balance split by asset type.'''
@@ -1357,6 +1377,55 @@ class ElectrumX(SessionBase):
         if asset_type not in (0, 1):
             raise RPCError(BAD_REQUEST, f'invalid asset_type: {asset_type}')
         return await self.hashX_listunspent_by_asset(hashX, asset_type)
+
+    async def hashX_listunspent_bounded(self, hashX, limit, asset_type):
+        '''At most `limit` unspent outputs of hashX by bounded_utxos(), with the count and
+        the value of all of them.  asset_type None takes every output, as listunspent does;
+        0 or 1 takes one asset, as listunspent_by_asset does.  Mempool effects as
+        listunspent applies them.'''
+        cache = self.session_mgr.utxo_cache
+        key = ('bounded', limit, asset_type)
+        result = cache.get(hashX, key)
+        if result is not None:
+            self.bump_cost(1.0 + len(result['outputs']) / 50)
+            return result
+        token = cache.begin(hashX)
+        stored = None
+        try:
+            utxos = await self.db.all_utxos(hashX)
+            utxos = sorted(utxos)
+            utxos.extend(await self.mempool.unordered_UTXOs(hashX))
+            self.bump_cost(1.0 + len(utxos) / 50)
+            spends = await self.mempool.potential_spends(hashX)
+            rows = [{'tx_hash': hash_to_hex_str(utxo.tx_hash),
+                     'tx_pos': utxo.tx_pos,
+                     'height': utxo.height, 'value': utxo.value,
+                     'n_visibility': utxo.n_visibility,
+                     'n_asset_type': utxo.n_asset_type}
+                    for utxo in utxos
+                    if (utxo.tx_hash, utxo.tx_pos) not in spends
+                    and (asset_type is None or utxo.n_asset_type == asset_type)]
+            result = {'outputs': bounded_utxos(rows, limit),
+                      'total': len(rows),
+                      'total_value': sum(row['value'] for row in rows)}
+            if len(utxos) >= CACHE_MIN_UTXOS:
+                stored = result
+        finally:
+            cache.end(hashX, token, key, stored)
+        return result
+
+    async def scripthash_listunspent_bounded(self, scripthash, limit, asset_type=None):
+        '''Return at most `limit` unspent outputs of a scripthash, confirmed first and
+        largest first, as {outputs, total, total_value}.
+
+        limit: 1 to 1,000.  asset_type: omitted or null for every output, 0 native SOQ,
+        1 USDSOQ.'''
+        hashX = scripthash_to_hashX(scripthash)
+        if type(limit) is not int or not 1 <= limit <= BOUND_MAX:
+            raise RPCError(BAD_REQUEST, f'limit must be an integer from 1 to {BOUND_MAX:,d}')
+        if asset_type is not None and (type(asset_type) is not int or asset_type not in (0, 1)):
+            raise RPCError(BAD_REQUEST, f'invalid asset_type: {asset_type}')
+        return await self.hashX_listunspent_bounded(hashX, limit, asset_type)
 
     async def unconfirmed_history(self, hashX):
         # Note both confirmed history and mempool history are ordered
@@ -1796,6 +1865,7 @@ class ElectrumX(SessionBase):
             'blockchain.scripthash.listunspent': self.scripthash_listunspent,
             'blockchain.scripthash.get_multi_balance': self.scripthash_get_multi_balance,
             'blockchain.scripthash.listunspent_by_asset': self.scripthash_listunspent_by_asset,
+            'blockchain.scripthash.listunspent_bounded': self.scripthash_listunspent_bounded,
             'blockchain.scripthash.subscribe': self.scripthash_subscribe,
             'blockchain.transaction.broadcast': self.transaction_broadcast,
             'blockchain.transaction.get': self.transaction_get,
