@@ -4118,7 +4118,8 @@ class Soqucoin(Coin):
     Block headers are variable-length (80 bytes + AuxPoW proof).
     STATIC_BLOCK_HEADERS must be False to handle this correctly.
 
-    CTxOut includes nVisibility (1 byte) + nAssetType (1 byte) after scriptPubKey.
+    Outputs are standard (value and scriptPubKey).  Asset and visibility are derived
+    from the witness version of the output script in block_processor.py.
     """
     NAME = "Soqucoin"
     SHORTNAME = "SOQ"
@@ -4160,7 +4161,7 @@ class Soqucoin(Coin):
 class SoqucoinStagenet(Coin):
     """Soqucoin Stagenet -- live pre-mainnet network for community mining.
 
-    AuxPoW merge-mining with Litecoin activates at block 25450.
+    AuxPoW merge-mining starts at block 100 (the node's stagenet nAuxpowStartHeight).
     Before that height, blocks have standard 80-byte headers.
     After activation, block headers include the variable-length AuxPoW proof.
     STATIC_BLOCK_HEADERS must be False to handle this correctly.
