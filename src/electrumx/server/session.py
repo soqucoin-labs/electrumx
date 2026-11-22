@@ -1415,8 +1415,9 @@ class ElectrumX(SessionBase):
         return result
 
     async def scripthash_listunspent_bounded(self, scripthash, limit, asset_type=None):
-        '''Return at most `limit` unspent outputs of a scripthash, confirmed first and
-        largest first, as {outputs, total, total_value}.
+        '''Return at most `limit` unspent outputs of a scripthash, chosen by bounded_utxos()
+        and listed largest first, as {outputs, total, total_value}.  The two totals cover
+        every output that matches asset_type, before the limit is applied.
 
         limit: 1 to 1,000.  asset_type: omitted or null for every output, 0 native SOQ,
         1 USDSOQ.'''

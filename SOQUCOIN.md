@@ -118,12 +118,23 @@ them.
 |--------|--------|
 | `blockchain.scripthash.get_multi_balance(scripthash)` | `{"soq": {"confirmed", "unconfirmed"}, "usdsoq": {"confirmed", "unconfirmed"}}`. Confirmed balances are split by asset type. The mempool delta is reported whole under `soq` and `usdsoq.unconfirmed` is always 0, because mempool records carry no asset label. |
 | `blockchain.scripthash.listunspent_by_asset(scripthash, asset_type)` | The `listunspent` entries of one asset: `0` for native SOQ (the default), `1` for USDSOQ. |
-| `blockchain.scripthash.listunspent_bounded(scripthash, limit, asset_type)` | `{"outputs", "total", "total_value"}`: at most `limit` entries (1 to 1,000), with the count and the value of all the address's unspent outputs. `asset_type` omitted or `null` takes every output. |
+| `blockchain.scripthash.listunspent_bounded(scripthash, limit, asset_type)` | `{"outputs", "total", "total_value"}`: at most `limit` entries (1 to 1,000). `total` and `total_value` are the count and the value of every unspent output that matches, before the limit is applied. `asset_type` omitted or `null` matches every output of the address. `0` or `1` matches one asset, and both totals then cover that asset alone. |
 
-When an address holds more outputs than `limit`, `listunspent_bounded` keeps confirmed outputs
-ahead of pending ones and larger ahead of smaller, and keeps one transaction's outputs together
-while they fit. It applies the mempool as `listunspent` does: pending outputs are listed at height
-0 and outputs spent in the mempool are left out.
+`listunspent_bounded` applies the mempool as `listunspent` does: pending outputs are listed at
+height 0 and outputs spent in the mempool are left out.
+
+When more outputs match than `limit`, `bounded_utxos()` (section 6) chooses the entries:
+
+1. It walks the confirmed outputs largest first, then the pending outputs largest first.
+2. At each output it takes all the outputs of that transaction together, when all of them still
+   fit. A transaction with more outputs than the places left is passed over, and a later
+   transaction that fits takes the places, a pending one included.
+3. Places still free after the walk go to the outputs left, in the order of step 1.
+4. The entries are returned largest first, whatever their height.
+
+Confirmed outputs therefore have no absolute priority. With a limit of 2, an address that holds
+three confirmed outputs of one transaction and two pending outputs of another gets the two pending
+outputs. Read `height` on each entry before treating it as confirmed.
 
 ### 6. `src/electrumx/server/utxo_cache.py`: the bounded selection and the cache
 

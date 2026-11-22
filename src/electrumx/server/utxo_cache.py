@@ -51,10 +51,12 @@ def _value_desc(row):
 def bounded_utxos(rows, limit):
     '''At most `limit` of `rows` (listunspent dicts), the list as given when it fits.
 
-    Confirmed outputs (height above 0) come before pending ones, each largest first.  A
-    transaction's outputs are kept together while they fit, so a sum per transaction over the
-    kept list equals the sum over the whole list; slots no whole transaction fits are filled
-    with the largest outputs left.  The kept set is ordered largest first.
+    The rows are walked confirmed first (height above 0), then pending, each largest first.
+    A transaction's outputs are taken together when all of them still fit, so a sum per
+    transaction over the kept list equals the sum over the whole list for a transaction
+    taken that way.  One with more outputs than the slots left is passed over, and a later
+    one that fits takes them, pending included.  Slots still free after the walk are filled
+    in the same order.  The kept set is returned largest first, whatever the height.
 
     This is largestUtxos() of soqucoin-ops infrastructure/soqushield-api/server.js at
     4fc527b8; tests/server/test_utxo_cache.py checks the two agree.  Rows are kept by identity,
