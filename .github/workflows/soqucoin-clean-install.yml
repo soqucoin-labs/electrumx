@@ -67,3 +67,12 @@ jobs:
 
       - name: Run the Soqucoin coin-support tests
         run: pytest tests/test_soqucoin_coin_support.py tests/test_soqucoin_reorg_undo.py tests/server/test_utxo_cache.py -v
+
+      - name: Run upstream's block tests
+        # Every mainnet coin class parses its block sample in tests/blocks: the Soqucoin
+        # sample, and the samples of the upstream coins, which this fork leaves as upstream
+        # has them. A sample whose hash module is absent is skipped; blake256 is installed
+        # because its absence fails four samples instead of skipping them.
+        run: |
+          pip install blake256
+          pytest tests/test_blocks.py -q

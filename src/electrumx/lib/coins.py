@@ -1108,7 +1108,7 @@ class Viacoin(AuxPowMixin, Coin):
     TX_PER_BLOCK = 30
     RPC_PORT = 5222
     REORG_LIMIT = 5000
-    DESERIALIZER = lib_tx.DeserializerSegWit
+    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
     PEERS = [
         'vialectrum.bitops.me s t',
         'server.vialectrum.org s t',
@@ -1211,7 +1211,7 @@ class Namecoin(NameIndexAuxPoWMixin, Coin):
     WIF_BYTE = bytes.fromhex("e4")
     GENESIS_HASH = ('000000000062b72c5e2ceb45fbc8587e'
                     '807c155b0da735e6483dfba2f0a9c770')
-    DESERIALIZER = lib_tx.DeserializerSegWit
+    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
     TX_COUNT = 4415768
     TX_COUNT_HEIGHT = 329065
     TX_PER_BLOCK = 10
@@ -1289,7 +1289,7 @@ class Dogecoin(AuxPowMixin, Coin):
     TX_COUNT_HEIGHT = 1604979
     TX_PER_BLOCK = 20
     REORG_LIMIT = 2000
-    DESERIALIZER = lib_tx.DeserializerSegWit
+    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
 
 
 class DogecoinTestnet(Dogecoin):
@@ -3134,7 +3134,7 @@ class Myriadcoin(AuxPowMixin, Coin):
     WIF_BYTE = bytes.fromhex("b2")
     GENESIS_HASH = ('00000ffde4c020b5938441a0ea3d314b'
                     'f619eff0b38f32f78f7583cffa1ea485')
-    DESERIALIZER = lib_tx.DeserializerSegWit
+    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
     TX_COUNT = 1976629
     TX_COUNT_HEIGHT = 2580356
     TX_PER_BLOCK = 20
@@ -3690,7 +3690,7 @@ class Defcoin(Coin):
     TX_PER_BLOCK = 1
     RPC_PORT = 9386
     REORG_LIMIT = 5000
-    DESERIALIZER = lib_tx.DeserializerSegWit
+    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
 
 
 class Auroracoin(Coin):
@@ -3959,7 +3959,7 @@ class Quebecoin(AuxPowMixin, Coin):
     WIF_BYTE = bytes.fromhex("ba")
     GENESIS_HASH = ('000008c2d57759af6462352ee9f4923d'
                     '97401cb599a9318e6595a2a74c26ea74')
-    DESERIALIZER = lib_tx.DeserializerSegWit
+    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
     TX_COUNT = 1
     TX_COUNT_HEIGHT = 1
     TX_PER_BLOCK = 20
@@ -3995,7 +3995,7 @@ class Syscoin(AuxPowMixin, Coin):
     WIF_BYTE = bytes.fromhex("80")
     GENESIS_HASH = ('0000022642db0346b6e01c2a397471f4'
                     'f12e65d4f4251ec96c1f85367a61a7ab')
-    DESERIALIZER = lib_tx.DeserializerSegWit
+    DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
     TX_COUNT = 911232
     TX_COUNT_HEIGHT = 954572
     TX_PER_BLOCK = 1
