@@ -404,6 +404,38 @@ def test_a_transaction_keeps_its_outputs_together_while_they_fit():
     assert [r['tx_pos'] for r in bounded_utxos(big, 3)] == [0, 1, 2]
 
 
+def kept_as(rows, limit):
+    return [(int(r['tx_hash'], 16), r['tx_pos'], r['height']) for r in bounded_utxos(rows, limit)]
+
+
+def test_a_confirmed_transaction_that_does_not_fit_gives_its_places_to_a_pending_one_that_does():
+    # three confirmed outputs of one transaction, two pending outputs of another
+    rows = [row(1, p, 100, 50) for p in range(3)] + [row(2, p, 0, 10 + p) for p in range(2)]
+    # two places: the confirmed transaction does not fit whole, so the pending one takes both
+    assert kept_as(rows, 2) == [(2, 1, 0), (2, 0, 0)]
+    # three places: the confirmed transaction fits and nothing pending is listed
+    assert kept_as(rows, 3) == [(1, 0, 100), (1, 1, 100), (1, 2, 100)]
+    # four places: the pending transaction does not fit the place left, which goes to the
+    # next output of the walk
+    assert kept_as(rows, 4) == [(1, 0, 100), (1, 1, 100), (1, 2, 100), (2, 1, 0)]
+    # one place: no transaction fits, and the place goes to the first output of the walk
+    assert kept_as(rows, 1) == [(1, 0, 100)]
+
+
+def test_places_left_after_the_walk_go_to_confirmed_outputs_before_larger_pending_ones():
+    # one confirmed output that fits; three small confirmed outputs of one transaction and three
+    # large pending outputs of another, neither of which fits the place left
+    rows = ([row(1, 0, 100, 100)] + [row(2, p, 100, 5) for p in range(3)]
+            + [row(3, p, 0, 1000) for p in range(3)])
+    assert kept_as(rows, 2) == [(1, 0, 100), (2, 0, 100)]
+
+
+def test_the_kept_list_is_ordered_by_value_whatever_the_height():
+    rows = [row(1, 0, 100, 10), row(2, 0, 0, 1000), row(3, 0, 100, 5), row(4, 0, 0, 500)]
+    # both confirmed outputs are kept, then the larger pending one, which is listed first
+    assert kept_as(rows, 3) == [(2, 0, 0), (1, 0, 100), (3, 0, 100)]
+
+
 # ── The real mempool: a refresh changes the maps across awaits ───────────────────────────
 
 from electrumx.lib.coins import BitcoinCash

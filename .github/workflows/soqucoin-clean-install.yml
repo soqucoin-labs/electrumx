@@ -67,3 +67,21 @@ jobs:
 
       - name: Run the Soqucoin coin-support tests
         run: pytest tests/test_soqucoin_coin_support.py tests/test_soqucoin_reorg_undo.py tests/server/test_utxo_cache.py -v
+
+      - name: SOQUCOIN.md names every file the fork changes under src/
+        # The file once described five changed files while the branch changed eight.
+        run: |
+          base=24865dc3a8ac8d360e467df704777c1bbef72706
+          git fetch --quiet --depth=1 origin "$base"
+          for f in $(git diff --name-only "$base" HEAD -- src/); do
+            grep -q -F "$f" SOQUCOIN.md || { echo "SOQUCOIN.md does not name $f"; exit 1; }
+          done
+
+      - name: Run upstream's block tests
+        # Every mainnet coin class parses its block sample in tests/blocks: the Soqucoin
+        # sample, and the samples of the upstream coins, which this fork leaves as upstream
+        # has them. A sample whose hash module is absent is skipped; blake256 is installed
+        # because its absence fails four samples instead of skipping them.
+        run: |
+          pip install blake256
+          pytest tests/test_blocks.py -q
